@@ -38,7 +38,7 @@ jobs:
           print("voice.mp3 created")
           PY
 
-# ---------- PEXELS VIDEO (random + query from input) ----------
+# ---------- PEXELS VIDEO (random page + random pick + logs) ----------
       - name: Download Pexels Video (random)
         env:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
@@ -48,15 +48,17 @@ jobs:
           import os, random, requests
 
           api_key = os.environ["PEXELS_API_KEY"].strip()
-          q = (os.environ.get("Q") or "vertical background").strip()
+          q = (os.environ.get("Q") or "nature vertical").strip()
 
           headers = {"Authorization": api_key}
-
-          # 15 sonuç çek, içinden rastgele seç
           url = "https://api.pexels.com/videos/search"
+
+          # Daha çok çeşit için random page + daha çok sonuç
+          page = random.randint(1, 10)
           params = {
             "query": q,
-            "per_page": 15,
+            "per_page": 30,
+            "page": page,
             "orientation": "portrait"
           }
 
@@ -66,8 +68,9 @@ jobs:
 
           vids = data.get("videos", [])
           if not vids:
-            # fallback query
-            params["query"] = "nature vertical"
+            params["query"] = "cinematic vertical"
+            page = random.randint(1, 10)
+            params["page"] = page
             r = requests.get(url, headers=headers, params=params, timeout=60)
             r.raise_for_status()
             data = r.json()
@@ -76,22 +79,30 @@ jobs:
               raise SystemExit("No Pexels videos found")
 
           v = random.choice(vids)
+          vid_id = v.get("id")
           files = v.get("video_files", [])
 
-          # mp4'ler içinden en yüksek çözünürlüğü seç
           mp4 = [f for f in files if "mp4" in (f.get("file_type") or "")]
           mp4.sort(key=lambda x: (x.get("height") or 0, x.get("width") or 0))
-          pick = mp4[-1] if mp4 else files[-1]
+          pick = mp4[-1] if mp4 else (files[-1] if files else None)
+          if not pick:
+            raise SystemExit("No video files found")
+
           link = pick["link"]
 
-          with requests.get(link, stream=True, timeout=120) as rr:
+          print("PEXELS_QUERY:", q)
+          print("PEXELS_PAGE:", page)
+          print("PEXELS_VIDEO_ID:", vid_id)
+          print("PEXELS_VIDEO_LINK:", link)
+
+          with requests.get(link, stream=True, timeout=180) as rr:
             rr.raise_for_status()
             with open("stock.mp4", "wb") as f:
               for chunk in rr.iter_content(chunk_size=1024*1024):
                 if chunk:
                   f.write(chunk)
 
-          print("Downloaded stock.mp4 using query:", q)
+          print("stock.mp4 downloaded")
           PY
 
 # ---------- RENDER (loop video to match voice length) ----------
