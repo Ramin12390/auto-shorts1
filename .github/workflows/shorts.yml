@@ -7,6 +7,8 @@ on:
         required: true
       script:
         required: true
+      pexels_query:
+        required: true
 
 jobs:
   build:
@@ -25,47 +27,71 @@ jobs:
       - name: TTS (Edge TTS)
         run: |
           python - <<'PY'
-          import asyncio
-          import edge_tts
-
+          import asyncio, edge_tts
           text = """${{ inputs.script }}""".strip()
           voice = "tr-TR-EmelNeural"
 
           async def main():
-              communicate = edge_tts.Communicate(text, voice)
-              await communicate.save("voice.mp3")
+              await edge_tts.Communicate(text, voice).save("voice.mp3")
 
           asyncio.run(main())
           print("voice.mp3 created")
           PY
 
-# ---------- PEXELS VIDEO ----------
-      - name: Download Pexels Video
+# ---------- PEXELS VIDEO (random + query from input) ----------
+      - name: Download Pexels Video (random)
         env:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          Q: ${{ inputs.pexels_query }}
         run: |
           python - <<'PY'
-          import requests, os
+          import os, random, requests
 
           api_key = os.environ["PEXELS_API_KEY"].strip()
+          q = (os.environ.get("Q") or "vertical background").strip()
+
           headers = {"Authorization": api_key}
 
-          url = "https://api.pexels.com/videos/search?query=productivity&per_page=1&orientation=portrait"
+          # 15 sonuç çek, içinden rastgele seç
+          url = "https://api.pexels.com/videos/search"
+          params = {
+            "query": q,
+            "per_page": 15,
+            "orientation": "portrait"
+          }
 
-          r = requests.get(url, headers=headers, timeout=60)
+          r = requests.get(url, headers=headers, params=params, timeout=60)
           r.raise_for_status()
           data = r.json()
 
-          video_url = data["videos"][0]["video_files"][-1]["link"]
+          vids = data.get("videos", [])
+          if not vids:
+            # fallback query
+            params["query"] = "nature vertical"
+            r = requests.get(url, headers=headers, params=params, timeout=60)
+            r.raise_for_status()
+            data = r.json()
+            vids = data.get("videos", [])
+            if not vids:
+              raise SystemExit("No Pexels videos found")
 
-          with requests.get(video_url, stream=True, timeout=120) as rr:
+          v = random.choice(vids)
+          files = v.get("video_files", [])
+
+          # mp4'ler içinden en yüksek çözünürlüğü seç
+          mp4 = [f for f in files if "mp4" in (f.get("file_type") or "")]
+          mp4.sort(key=lambda x: (x.get("height") or 0, x.get("width") or 0))
+          pick = mp4[-1] if mp4 else files[-1]
+          link = pick["link"]
+
+          with requests.get(link, stream=True, timeout=120) as rr:
             rr.raise_for_status()
-            with open("stock.mp4","wb") as f:
+            with open("stock.mp4", "wb") as f:
               for chunk in rr.iter_content(chunk_size=1024*1024):
                 if chunk:
                   f.write(chunk)
 
-          print("stock.mp4 downloaded")
+          print("Downloaded stock.mp4 using query:", q)
           PY
 
 # ---------- RENDER (loop video to match voice length) ----------
