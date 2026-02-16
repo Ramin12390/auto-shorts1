@@ -21,66 +21,97 @@ jobs:
           sudo apt install -y ffmpeg
           pip install requests
 
-# ---------- ELEVENLABS TTS ----------
-      - name: TTS (ElevenLabs)
+# ---------- ELEVENLABS TTS (SAFE) ----------
+      - name: TTS (ElevenLabs) - safe
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           python - <<'PY'
-          import requests, os, json
+          import requests, os
 
-          text = """${{ inputs.script }}"""
-          api_key = os.environ["ELEVENLABS_API_KEY"]
+          text = """${{ inputs.script }}""".strip()
+          api_key = os.environ["ELEVENLABS_API_KEY"].strip()
 
           voice_id = "o9DOmAyPjfFu8AfoFAnM"
-
           url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 
           headers = {
             "xi-api-key": api_key,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg"
           }
 
-          data = {
+          payload = {
             "text": text,
             "model_id": "eleven_multilingual_v2"
           }
 
-          r = requests.post(url, headers=headers, json=data)
+          r = requests.post(url, headers=headers, json=payload, timeout=120)
 
-          with open("voice.mp3","wb") as f:
-            f.write(r.content)
+          if r.status_code != 200:
+            print("ElevenLabs error:", r.status_code)
+            print(r.text[:500])
+            raise SystemExit(1)
+
+          b = r.content
+          # MP3 basic validation (ID3 or frame sync)
+          if not (b.startswith(b"ID3") or b[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")):
+            print("Not a valid MP3 payload. First bytes:", b[:16])
+            raise SystemExit(1)
+
+          with open("voice.mp3", "wb") as f:
+            f.write(b)
+
+          print("voice.mp3 OK, bytes:", len(b))
           PY
 
-# ---------- PEXELS VIDEO ----------
-      - name: Download Pexels Video
+# ---------- PEXELS VIDEO (SAFE) ----------
+      - name: Download Pexels Video - safe
         env:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: |
           python - <<'PY'
           import requests, os
 
-          api_key = os.environ["PEXELS_API_KEY"]
-
+          api_key = os.environ["PEXELS_API_KEY"].strip()
           headers = {"Authorization": api_key}
 
           url = "https://api.pexels.com/videos/search?query=productivity&per_page=1&orientation=portrait"
 
-          r = requests.get(url, headers=headers)
+          r = requests.get(url, headers=headers, timeout=60)
+          if r.status_code != 200:
+            print("Pexels error:", r.status_code)
+            print(r.text[:500])
+            raise SystemExit(1)
+
           data = r.json()
+          if not data.get("videos"):
+            raise SystemExit("No Pexels videos returned.")
 
-          video_url = data["videos"][0]["video_files"][-1]["link"]
+          files = data["videos"][0].get("video_files", [])
+          if not files:
+            raise SystemExit("No video_files in Pexels response.")
 
-          vid = requests.get(video_url)
+          # pick best (largest height mp4)
+          mp4 = [f for f in files if "mp4" in (f.get("file_type") or "")]
+          mp4.sort(key=lambda x: (x.get("height") or 0))
+          pick = mp4[-1] if mp4 else files[-1]
+          video_url = pick["link"]
 
-          with open("stock.mp4","wb") as f:
-            f.write(vid.content)
+          with requests.get(video_url, stream=True, timeout=120) as rr:
+            rr.raise_for_status()
+            with open("stock.mp4", "wb") as f:
+              for chunk in rr.iter_content(chunk_size=1024*1024):
+                if chunk:
+                  f.write(chunk)
+
+          print("stock.mp4 downloaded")
           PY
 
 # ---------- RENDER ----------
       - name: Render Video
         run: |
-          ffmpeg -i stock.mp4 -i voice.mp3 \
+          ffmpeg -y -i stock.mp4 -i voice.mp3 \
           -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920" \
           -shortest -c:v libx264 -c:a aac out.mp4
 
