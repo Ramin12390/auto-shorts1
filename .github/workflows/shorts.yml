@@ -32,7 +32,7 @@ jobs:
           text = """${{ inputs.script }}"""
           api_key = os.environ["ELEVENLABS_API_KEY"]
 
-          voice_id = "21m00Tcm4TlvDq8ikWAM"
+          voice_id = "o9DOmAyPjfFu8AfoFAnM"
 
           url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 
